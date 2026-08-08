@@ -6,3 +6,4 @@ langchain
 langchain-community
 langchain-groq
 python-dotenv
+duckduckgo-search
