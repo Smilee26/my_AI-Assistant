@@ -1,75 +1,93 @@
-<script>
-    const chatForm = document.getElementById('chatForm');
-    const userInput = document.getElementById('userInput');
-    const chatBody = document.getElementById('chatBody');
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Assistant</title>
+    <!-- CSS styles go here -->
+</head>
+<body>
 
-    chatForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const message = userInput.value.trim();
-        if (!message) return;
+    <div class="chat-container">
+        <div class="chat-header">🤖 AI Assistant</div>
+        <div class="chat-body" id="chatBody"></div>
+        <form class="chat-footer" id="chatForm">
+            <input type="text" id="userInput" placeholder="Type a message..." required autocomplete="off">
+            <button type="submit">Send</button>
+        </form>
+    </div>
 
-        appendMessage(message, 'user');
-        userInput.value = '';
+    <!-- SCRIPT GOES AT THE VERY BOTTOM -->
+    <script>
+        const chatForm = document.getElementById('chatForm');
+        const userInput = document.getElementById('userInput');
+        const chatBody = document.getElementById('chatBody');
 
-        const typingElem = createTypingIndicator();
-        chatBody.appendChild(typingElem);
-        chatBody.scrollTop = chatBody.scrollHeight;
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = userInput.value.trim();
+            if (!message) return;
 
-        try {
-            // ✅ Fixed variable name & updated Render URL
-            const response = await fetch('https://my-ai-assistant-dc4p.onrender.com/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: message }) 
-            });
+            appendMessage(message, 'user');
+            userInput.value = '';
 
-            const data = await response.json();
-            chatBody.removeChild(typingElem);
+            const typingElem = createTypingIndicator();
+            chatBody.appendChild(typingElem);
+            chatBody.scrollTop = chatBody.scrollHeight;
 
-            if (response.ok) {
-                appendMessage(data.reply, 'ai');
-            } else {
-                appendMessage('Oops! Something went wrong 😅', 'ai');
+            try {
+                const response = await fetch('https://my-ai-assistant-dc4p.onrender.com/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message })
+                });
+
+                const data = await response.json();
+                chatBody.removeChild(typingElem);
+
+                if (response.ok) {
+                    appendMessage(data.reply || data.response || JSON.stringify(data), 'ai');
+                } else {
+                    appendMessage('Oops! Something went wrong 😅', 'ai');
+                }
+            } catch (err) {
+                chatBody.removeChild(typingElem);
+                appendMessage('Connection error. Is the server running? 🔌', 'ai');
             }
-        } catch (err) {
-            chatBody.removeChild(typingElem);
-            appendMessage('Connection error. Is the server running? 🔌', 'ai');
+        });
+
+        function appendMessage(text, sender) {
+            const rowDiv = document.createElement('div');
+            rowDiv.classList.add('msg-row', sender);
+
+            const avatar = document.createElement('span');
+            avatar.innerText = sender === 'user' ? '🧑‍💻' : '🤖';
+
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.classList.add('msg-bubble');
+            bubbleDiv.innerHTML = text.replace(/\n/g, '<br>');
+
+            rowDiv.appendChild(avatar);
+            rowDiv.appendChild(bubbleDiv);
+
+            chatBody.appendChild(rowDiv);
+            chatBody.scrollTop = chatBody.scrollHeight;
         }
-    });
 
-    function appendMessage(text, sender) {
-        const rowDiv = document.createElement('div');
-        rowDiv.classList.add('msg-row', sender);
+        function createTypingIndicator() {
+            const rowDiv = document.createElement('div');
+            rowDiv.classList.add('msg-row', 'ai');
 
-        const avatar = document.createElement('span');
-        avatar.classList.add('avatar-emoji');
-        avatar.innerText = sender === 'user' ? '🧑‍💻' : '🤖';
+            const avatar = document.createElement('span');
+            avatar.innerText = '🤖';
 
-        const bubbleDiv = document.createElement('div');
-        bubbleDiv.classList.add('msg-bubble');
-        bubbleDiv.innerHTML = text.replace(/\n/g, '<br>');
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.classList.add('msg-bubble');
+            bubbleDiv.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
 
-        rowDiv.appendChild(avatar);
-        rowDiv.appendChild(bubbleDiv);
-
-        chatBody.appendChild(rowDiv);
-        chatBody.scrollTop = chatBody.scrollHeight;
-    }
-
-    function createTypingIndicator() {
-        const rowDiv = document.createElement('div');
-        rowDiv.classList.add('msg-row', 'ai');
-
-        const avatar = document.createElement('span');
-        avatar.classList.add('avatar-emoji');
-        avatar.innerText = '🤖';
-
-        const bubbleDiv = document.createElement('div');
-        bubbleDiv.classList.add('msg-bubble');
-        bubbleDiv.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
-
-        rowDiv.appendChild(avatar);
-        rowDiv.appendChild(bubbleDiv);
-        return rowDiv;
-    }
-</script>
+            rowDiv.appendChild(avatar);
+            rowDiv.appendChild(bubbleDiv);
+            return rowDiv;
+        }
+    </script>
+</body>
+</html>
