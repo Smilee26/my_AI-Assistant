@@ -1,9 +1,8 @@
 fastapi
 uvicorn
-requests
 pydantic
 langchain
 langchain-community
 langchain-groq
-python-dotenv
 duckduckgo-search
+python-dotenv
