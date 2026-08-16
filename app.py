@@ -14,7 +14,7 @@ load_dotenv()
 
 app = FastAPI()
 
-# 1. CORS Configuration for GitHub Pages Frontend
+# 1. Enable CORS for GitHub Pages frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,14 +25,14 @@ app.add_middleware(
 # 2. Fetch Groq API Key
 groq_key = os.getenv("GROQ_API_KEY")
 
-# 3. Initialize Groq Chat Model (Using active replacement model)
+# 3. Initialize Groq Chat Model
 llm = ChatGroq(
-    model="qwen3.6-27b",  # Or "gpt-oss-120b"
+    model="qwen3.6-27b",
     temperature=0.2,
     api_key=groq_key
 )
 
-# 4. Bind DuckDuckGo Web Search Tool
+# 4. Bind Search Tool to the Model
 search_tool = DuckDuckGoSearchRun()
 tools = [search_tool]
 tools_by_name = {tool.name: tool for tool in tools}
@@ -44,20 +44,21 @@ class MessageRequest(BaseModel):
 @app.post("/api/chat")
 async def chat_endpoint(request: MessageRequest):
     try:
-        # Dynamically fetch current date (e.g., August 16, 2026)
+        # Dynamically calculate current 2026 date
         today_date = datetime.now()
         today_str = today_date.strftime("%B %d, %Y")
         current_year = today_date.year
 
-        # System message forcing 2026 temporal awareness and search execution
+        # System message forcing 2026 baseline and overriding static cutoff answers
         messages = [
             SystemMessage(
                 content=(
-                    f"You are PRIME, an intelligent AI assistant. Today's date is {today_str} (Year {current_year}). "
-                    f"Your static training data ends in the past. Whenever a user asks about current events, "
-                    f"dates, live information, or anything taking place in {current_year}, you MUST invoke "
-                    f"the web search tool to retrieve accurate, up-to-date data before responding. "
-                    f"Never say your knowledge ends in past years without searching first."
+                    f"You are PRIME, an intelligent AI assistant operating in {current_year}. "
+                    f"Today's date is {today_str}. "
+                    f"Never say your knowledge ends in December 2023. You have real-time web access for {current_year}. "
+                    f"If the user asks about your knowledge cutoff, state that you operate with live 2026 data via web search. "
+                    f"For any queries regarding current news, events, dates, or real-time topics, ALWAYS execute "
+                    f"a web search to get accurate, up-to-date results before answering."
                 )
             ),
             HumanMessage(content=request.message)
@@ -66,7 +67,7 @@ async def chat_endpoint(request: MessageRequest):
         # First LLM execution
         ai_msg = llm_with_tools.invoke(messages)
 
-        # Handle tool calling loop for DuckDuckGo
+        # Handle tool execution loop for live DuckDuckGo Search
         if ai_msg.tool_calls:
             messages.append(ai_msg)
             for tool_call in ai_msg.tool_calls:
@@ -84,14 +85,14 @@ async def chat_endpoint(request: MessageRequest):
                         ToolMessage(content=str(tool_output), tool_call_id=tool_call["id"])
                     )
             
-            # Send search results back to Groq model for final 2026 answer
+            # Send web search results back to the LLM for the final answer
             final_res = llm_with_tools.invoke(messages)
             return {"reply": final_res.content}
 
         return {"reply": ai_msg.content}
 
     except Exception as e:
-        # Graceful fallback to direct LLM execution if tool calling fails
+        # Fallback to direct invocation if tool routing encounters an error
         try:
             fallback_res = llm.invoke(request.message)
             return {"reply": fallback_res.content}
