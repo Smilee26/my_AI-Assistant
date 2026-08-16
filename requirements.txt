@@ -3,5 +3,4 @@ uvicorn
 pydantic
 python-dotenv
 langchain-groq
-langchain-community
-tavily-python
+tinyfish
