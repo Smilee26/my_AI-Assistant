@@ -1,9 +1,6 @@
 fastapi
 uvicorn
 pydantic
-langchain
-langchain-community
-langchain-groq
-duckduckgo-search
-ddgs
 python-dotenv
+langchain-groq
+langchain-tavily
