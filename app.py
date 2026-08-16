@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from langchain_groq import ChatGroq
-from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_community.tools.tavily_search import TavilySearchResults
 
 load_dotenv()
 
@@ -21,9 +21,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-search_tool = DuckDuckGoSearchRun()
+# Initialize both API components
 groq_key = os.getenv("GROQ_API_KEY")
+tavily_key = os.getenv("TAVILY_API_KEY")
 
+# Set up Tavily real-time search tool
+search_tool = TavilySearchResults(
+    max_results=3,
+    tavily_api_key=tavily_key
+)
+
+# Set up Groq LLM
 llm = ChatGroq(
     model="llama-3.1-8b-instant",
     temperature=0.2,
@@ -37,30 +45,27 @@ class MessageRequest(BaseModel):
 async def chat_endpoint(request: MessageRequest):
     try:
         current_year = datetime.now().year
+        today_date = datetime.now().strftime("%B %d, %Y")
         
-        # 1. Optimize search query explicitly for live data/weather
-        query_text = request.message.strip()
-        search_query = f"{query_text} live update {current_year}"
-        
+        # Execute Tavily search
         try:
-            search_results = search_tool.run(search_query)
+            raw_results = search_tool.invoke({"query": request.message})
+            search_context = "\n".join([r.get("content", "") for r in raw_results])
         except Exception as search_err:
-            search_results = f"Search tool failed: {str(search_err)}"
+            search_context = f"Search failed: {str(search_err)}"
 
-        if not search_results or len(search_results.strip()) == 0:
-            search_results = "No search results found."
+        if not search_context.strip():
+            search_context = "No specific live web data retrieved."
 
-        # 2. Strict instruction prompt that prevents keyword misinterpretation
+        # Prompt instruction preventing cutoff responses
         prompt = (
-            f"SYSTEM ROLE: You are PRIME AI, a real-time web assistant operating in {current_year}.\n"
+            f"SYSTEM: You are PRIME AI operating on {today_date}.\n"
             f"USER QUERY: {request.message}\n\n"
-            f"LIVE SEARCH RESULTS:\n{search_results}\n\n"
-            "STRICT GUIDELINES:\n"
-            "1. Answer using ONLY the live search results provided above.\n"
-            "2. If the user asks for weather, temperature, or news, look ONLY at the weather and news facts in the search data.\n"
-            "3. Do NOT mistake words like 'current' for financial platforms or brand names unless explicitly asked.\n"
-            "4. NEVER mention an AI knowledge cutoff date (such as 2023).\n"
-            "5. Deliver a direct, friendly, and helpful summary based on the web results."
+            f"LIVE SEARCH DATA:\n{search_context}\n\n"
+            "RULES:\n"
+            "1. Base your response on the live search data.\n"
+            "2. NEVER mention a 2023 knowledge cutoff date.\n"
+            "3. Provide a clear, real-time answer."
         )
 
         response = llm.invoke(prompt)
@@ -70,7 +75,6 @@ async def chat_endpoint(request: MessageRequest):
         print(f"Server Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal processing error")
 
-# Serve UI static files directly at root URL
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
