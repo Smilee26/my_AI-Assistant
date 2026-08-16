@@ -3,7 +3,6 @@ from pathlib import Path
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -22,12 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Resolve path relative to app.py location
 BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
-
-# Ensure the static directory exists on runtime
-STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
 groq_key = os.getenv("GROQ_API_KEY")
 tinyfish_key = os.getenv("TINYFISH_API_KEY")
@@ -76,11 +70,9 @@ async def chat_endpoint(request: MessageRequest):
         print(f"Server Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal processing error")
 
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
 @app.get("/")
 async def read_index():
-    index_path = STATIC_DIR / "index.html"
+    index_path = BASE_DIR / "index.html"
     if index_path.exists():
         return FileResponse(str(index_path))
-    return {"status": "PRIME AI API active. Place index.html inside the static folder."}
+    return {"status": "PRIME AI API active."}
