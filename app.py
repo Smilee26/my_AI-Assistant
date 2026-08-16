@@ -6,9 +6,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from langchain_groq import ChatGroq
-from langchain_core.tools import tool
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
-from googlesearch import search
+from langchain_community.tools import DuckDuckGoSearchRun
 
 load_dotenv()
 
@@ -21,34 +19,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@tool
-def google_search(query: str) -> str:
-    """Searches Google for current news, real-time data, and up-to-date information."""
-    try:
-        results = list(search(query, num_results=3, advanced=True))
-        if not results:
-            return "No Google search results found."
-        
-        output = []
-        for r in results:
-            output.append(f"Title: {r.title}\nSnippet: {r.description}")
-        return "\n\n".join(output)
-    except Exception as e:
-        return f"Search error: {str(e)}"
-
+search_tool = DuckDuckGoSearchRun()
 groq_key = os.getenv("GROQ_API_KEY")
 
 llm = ChatGroq(
     model="llama-3.1-8b-instant",
-    temperature=0.1,
+    temperature=0.2,
     api_key=groq_key
 )
-
-tools = [google_search]
-tools_by_name = {tool.name: tool for tool in tools}
-
-# FIX: Pass the explicit tool name "google_search" or "any" instead of "required"
-llm_forced_tool = llm.bind_tools(tools, tool_choice="google_search")
 
 class MessageRequest(BaseModel):
     message: str
@@ -57,48 +35,31 @@ class MessageRequest(BaseModel):
 async def chat_endpoint(request: MessageRequest):
     try:
         current_year = datetime.now().year
-        today_str = datetime.now().strftime("%B %d, %Y")
+        
+        # 1. Force search execution
+        search_query = f"{request.message} {current_year}"
+        try:
+            search_results = search_tool.run(search_query)
+        except Exception as search_err:
+            search_results = f"No live search results available. Details: {str(search_err)}"
 
-        messages = [
-            SystemMessage(
-                content=(
-                    f"You are PRIME AI, operating in {current_year}. Today is {today_str}.\n"
-                    "Use the search results to answer the query accurately with current information."
-                )
-            ),
-            HumanMessage(content=request.message)
-        ]
+        if not search_results or len(search_results.strip()) == 0:
+            search_results = "Search executed but returned no text."
 
-        # 1. Mandatory Tool Call Step
-        ai_msg = llm_forced_tool.invoke(messages)
+        # 2. Hardcode prompt constraints to prevent 2023 fallback
+        prompt = (
+            f"Current Year: {current_year}\n"
+            f"User Query: {request.message}\n\n"
+            f"Web Context:\n{search_results}\n\n"
+            "STRICT RULES:\n"
+            "- Answer the user using ONLY the web context provided above.\n"
+            "- NEVER say 'As of my knowledge cutoff in 2023'.\n"
+            "- If context is limited, summarize what is available for 2026 without mentioning knowledge cutoffs."
+        )
 
-        if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
-            messages.append(ai_msg)
-            
-            for tool_call in ai_msg.tool_calls:
-                tool_name = tool_call["name"]
-                tool_args = tool_call.get("args", {})
-                
-                if tool_name in tools_by_name:
-                    selected_tool = tools_by_name[tool_name]
-                    query_str = tool_args.get("query", request.message) if isinstance(tool_args, dict) else str(tool_args)
-                    
-                    search_results = selected_tool.invoke({"query": query_str})
-                    
-                    messages.append(
-                        ToolMessage(content=str(search_results), tool_call_id=tool_call["id"])
-                    )
-            
-            # 2. Final Synthesis Step (Standard LLM without forced tool choice)
-            final_res = llm.invoke(messages)
-            
-            reply_text = final_res.content if final_res.content else "I have retrieved the latest results."
-            return {"reply": reply_text}
-
-        return {"reply": "Unable to execute search."}
+        response = llm.invoke(prompt)
+        return {"reply": response.content}
 
     except Exception as e:
-        print(f"Error: {str(e)}")
-        # Fallback to standard generation if search execution fails
-        fallback = llm.invoke(request.message)
-        return {"reply": fallback.content}
+        print(f"Server Error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal processing error")
