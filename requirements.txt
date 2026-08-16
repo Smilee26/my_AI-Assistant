@@ -3,7 +3,5 @@ uvicorn
 pydantic
 python-dotenv
 langchain-groq
-langchain-core
 langchain-community
-ddgs
-duckduckgo-search
+tavily-python
