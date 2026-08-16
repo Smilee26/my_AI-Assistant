@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
@@ -37,12 +38,20 @@ llm = ChatGroq(
 class MessageRequest(BaseModel):
     message: str
 
+def clean_markdown_formatting(text: str) -> str:
+    """Removes unwanted markdown formatting symbols for plain text rendering."""
+    # Remove asterisks used for bold/italic (* or **)
+    text = re.sub(r'\*+', '', text)
+    # Remove header hashtags (# or ##)
+    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+    return text.strip()
+
 @app.post("/api/chat")
 async def chat_endpoint(request: MessageRequest):
     try:
         today_date = datetime.now().strftime("%B %d, %Y")
         
-        # Retrieve up to 5 live web search snippets
+        # Retrieve live web search context
         try:
             search_resp = tf_client.search.query(query=request.message)
             results = search_resp.results if hasattr(search_resp, "results") else []
@@ -53,21 +62,26 @@ async def chat_endpoint(request: MessageRequest):
         if not search_context.strip():
             search_context = "No live search results available."
 
-        # Strict Prompt Constraints to Eliminate Hallucinations
+        # System prompt instructions for natural, plain text output
         prompt = (
-            f"SYSTEM: You are PRIME AI, a factual assistant operating on {today_date}.\n"
+            f"SYSTEM: You are PRIME AI, a direct assistant operating on {today_date}.\n"
             f"USER QUERY: {request.message}\n\n"
             f"LIVE SEARCH CONTEXT:\n{search_context}\n\n"
-            "STRICT FACTUAL RULES:\n"
-            "1. Answer the query using ONLY verified facts directly supported by the provided LIVE SEARCH CONTEXT.\n"
-            "2. Do NOT invent, exaggerate, or combine unrelated pop-science claims (e.g., do not invent terms like 'lemon planet' or unsupported atmospheric claims).\n"
-            "3. If a detail or specific detail is not present in the search context, state clearly that it is unconfirmed or omitted from recent releases.\n"
-            "4. Organize your response clearly with bullet points and bold headers.\n"
+            "FORMATTING & ACCURACY RULES:\n"
+            "1. Answer strictly using verified facts supported by the live search context.\n"
+            "2. Write in clean, natural conversational text without markdown symbols.\n"
+            "3. Do NOT use asterisks (*), hashtags (#), or bullet points with symbols.\n"
+            "4. Organize ideas using clear spacing and natural sentences.\n"
             "5. Never mention knowledge cutoffs or context window limitations."
         )
 
         response = llm.invoke(prompt)
-        return {"reply": response.content}
+        raw_text = response.content
+        
+        # Remove leftover markdown characters before returning payload
+        cleaned_reply = clean_markdown_formatting(raw_text)
+
+        return {"reply": cleaned_reply}
 
     except Exception as e:
         print(f"Server Error: {str(e)}")
