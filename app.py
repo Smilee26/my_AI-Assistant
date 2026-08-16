@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from langchain_groq import ChatGroq
-from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_tavily import TavilySearch
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
 load_dotenv()
@@ -21,16 +21,20 @@ app.add_middleware(
 )
 
 groq_key = os.getenv("GROQ_API_KEY")
+tavily_key = os.getenv("TAVILY_API_KEY")
 
+# Updated to an active Groq model ID
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
+    model="llama-3.1-8b-instant",  # Active replacement model on Groq
     temperature=0.2,
     api_key=groq_key
 )
 
-search_tool = DuckDuckGoSearchRun()
+# Initialize Tavily Search
+search_tool = TavilySearch(max_results=3)
 tools = [search_tool]
 tools_by_name = {tool.name: tool for tool in tools}
+
 llm_with_tools = llm.bind_tools(tools)
 
 class MessageRequest(BaseModel):
@@ -43,17 +47,17 @@ async def chat_endpoint(request: MessageRequest):
 
         messages = [
             SystemMessage(
-                content=f"You are PRIME, an intelligent AI assistant. Today's date is {today_str}. "
-                        f"Operate fully within the context of {datetime.now().year}. "
-                        f"If asked about current events, dates, or live topics, use the web search tool."
+                content=(
+                    f"You are PRIME, an intelligent AI assistant. Today's date is {today_str}.\n"
+                    "1. You have live real-time web search capabilities via Tavily.\n"
+                    "2. ALWAYS invoke the search tool for questions regarding current news, events, dates, or your knowledge cutoff."
+                )
             ),
             HumanMessage(content=request.message)
         ]
 
-        # 1. First LLM Execution
         ai_msg = llm_with_tools.invoke(messages)
 
-        # 2. Check for Tool Calls
         if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
             messages.append(ai_msg)
             
@@ -64,31 +68,22 @@ async def chat_endpoint(request: MessageRequest):
                 if tool_name in tools_by_name:
                     selected_tool = tools_by_name[tool_name]
                     
-                    # Extract query safely
-                    if isinstance(tool_args, dict):
-                        query = tool_args.get("query", str(tool_args))
-                    else:
-                        query = str(tool_args)
-                    
-                    # Safe tool execution (prevents 500 errors on search failures)
                     try:
-                        tool_output = selected_tool.invoke(query)
-                    except Exception as tool_err:
-                        tool_output = f"Search currently unavailable ({str(tool_err)}). Answer using system instructions."
+                        tool_output = selected_tool.invoke(tool_args)
+                    except Exception as err:
+                        tool_output = f"Search currently unavailable: {str(err)}"
                     
                     messages.append(
                         ToolMessage(content=str(tool_output), tool_call_id=tool_call["id"])
                     )
             
-            # 3. Final response generation
             final_res = llm_with_tools.invoke(messages)
             return {"reply": final_res.content}
 
         return {"reply": ai_msg.content}
 
     except Exception as e:
-        print(f"Backend Error: {str(e)}")
-        # Safe fallback: invoke model directly without tool routing
+        print(f"Server Error: {str(e)}")
         try:
             fallback_res = llm.invoke(request.message)
             return {"reply": fallback_res.content}
