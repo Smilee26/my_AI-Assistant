@@ -25,9 +25,9 @@ app.add_middleware(
 # 2. Fetch Groq API Key
 groq_key = os.getenv("GROQ_API_KEY")
 
-# 3. Initialize Groq Chat Model
+# 3. Initialize Groq Chat Model using official Groq Model ID
 llm = ChatGroq(
-    model="qwen3.6-27b",
+    model="llama-3.3-70b-versatile",  # Or "llama-3.1-8b-instant" / "qwen/qwen3.6-27b"
     temperature=0.2,
     api_key=groq_key
 )
@@ -44,22 +44,12 @@ class MessageRequest(BaseModel):
 @app.post("/api/chat")
 async def chat_endpoint(request: MessageRequest):
     try:
-        # Dynamically calculate current 2026 date
-        today_date = datetime.now()
-        today_str = today_date.strftime("%B %d, %Y")
-        current_year = today_date.year
+        today_str = datetime.now().strftime("%B %d, %Y")
 
-        # System message forcing 2026 baseline and overriding static cutoff answers
         messages = [
             SystemMessage(
-                content=(
-                    f"You are PRIME, an intelligent AI assistant operating in {current_year}. "
-                    f"Today's date is {today_str}. "
-                    f"Never say your knowledge ends in December 2023. You have real-time web access for {current_year}. "
-                    f"If the user asks about your knowledge cutoff, state that you operate with live 2026 data via web search. "
-                    f"For any queries regarding current news, events, dates, or real-time topics, ALWAYS execute "
-                    f"a web search to get accurate, up-to-date results before answering."
-                )
+                content=f"You are PRIME, an intelligent AI assistant. Today's date is {today_str}. "
+                        f"Always use the web search tool to retrieve live, current, and real-time information."
             ),
             HumanMessage(content=request.message)
         ]
@@ -68,7 +58,7 @@ async def chat_endpoint(request: MessageRequest):
         ai_msg = llm_with_tools.invoke(messages)
 
         # Handle tool execution loop for live DuckDuckGo Search
-        if ai_msg.tool_calls:
+        if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
             messages.append(ai_msg)
             for tool_call in ai_msg.tool_calls:
                 tool_name = tool_call["name"]
@@ -76,7 +66,12 @@ async def chat_endpoint(request: MessageRequest):
                 
                 if tool_name in tools_by_name:
                     selected_tool = tools_by_name[tool_name]
-                    query = tool_args.get("query", tool_args) if isinstance(tool_args, dict) else tool_args
+                    
+                    # Safely handle string vs dict queries
+                    if isinstance(tool_args, dict):
+                        query = tool_args.get("query", str(tool_args))
+                    else:
+                        query = str(tool_args)
                     
                     # Execute Search
                     tool_output = selected_tool.invoke(query)
@@ -85,16 +80,17 @@ async def chat_endpoint(request: MessageRequest):
                         ToolMessage(content=str(tool_output), tool_call_id=tool_call["id"])
                     )
             
-            # Send web search results back to the LLM for the final answer
+            # Send search results back for final answer
             final_res = llm_with_tools.invoke(messages)
             return {"reply": final_res.content}
 
         return {"reply": ai_msg.content}
 
     except Exception as e:
-        # Fallback to direct invocation if tool routing encounters an error
+        print(f"Backend Execution Error: {str(e)}")
+        # Direct fallback to simple response without tools if tool invocation fails
         try:
             fallback_res = llm.invoke(request.message)
             return {"reply": fallback_res.content}
-        except Exception:
-            raise HTTPException(status_code=500, detail=str(e))
+        except Exception as fallback_err:
+            raise HTTPException(status_code=500, detail=str(fallback_err))
