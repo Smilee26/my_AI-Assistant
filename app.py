@@ -42,7 +42,7 @@ async def chat_endpoint(request: MessageRequest):
     try:
         today_date = datetime.now().strftime("%B %d, %Y")
         
-        # Fetch up to 5 web results for higher detail
+        # Retrieve up to 5 live web search snippets
         try:
             search_resp = tf_client.search.query(query=request.message)
             results = search_resp.results if hasattr(search_resp, "results") else []
@@ -51,17 +51,19 @@ async def chat_endpoint(request: MessageRequest):
             search_context = f"Search error: {str(search_err)}"
 
         if not search_context.strip():
-            search_context = "No search results retrieved."
+            search_context = "No live search results available."
 
-        # Expanded system prompt for synthesized, complete answers
+        # Strict Prompt Constraints to Eliminate Hallucinations
         prompt = (
-            f"SYSTEM: You are PRIME AI operating on {today_date}.\n"
+            f"SYSTEM: You are PRIME AI, a factual assistant operating on {today_date}.\n"
             f"USER QUERY: {request.message}\n\n"
-            f"LIVE SEARCH RESULTS:\n{search_context}\n\n"
-            "RULES:\n"
-            "1. Use live search data as your primary source for up-to-date real-time context.\n"
-            "2. Synthesize all retrieved findings into a comprehensive, direct, and detailed answer.\n"
-            "3. Do NOT mention knowledge cutoffs."
+            f"LIVE SEARCH CONTEXT:\n{search_context}\n\n"
+            "STRICT FACTUAL RULES:\n"
+            "1. Answer the query using ONLY verified facts directly supported by the provided LIVE SEARCH CONTEXT.\n"
+            "2. Do NOT invent, exaggerate, or combine unrelated pop-science claims (e.g., do not invent terms like 'lemon planet' or unsupported atmospheric claims).\n"
+            "3. If a detail or specific detail is not present in the search context, state clearly that it is unconfirmed or omitted from recent releases.\n"
+            "4. Organize your response clearly with bullet points and bold headers.\n"
+            "5. Never mention knowledge cutoffs or context window limitations."
         )
 
         response = llm.invoke(prompt)
