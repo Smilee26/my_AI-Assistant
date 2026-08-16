@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from langchain_groq import ChatGroq
-from langchain_community.tools.tavily_search import TavilySearchResults
+from tinyfish import TinyFish
 
 load_dotenv()
 
@@ -21,17 +21,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize both API components
 groq_key = os.getenv("GROQ_API_KEY")
-tavily_key = os.getenv("TAVILY_API_KEY")
+tinyfish_key = os.getenv("TINYFISH_API_KEY")
 
-# Set up Tavily real-time search tool
-search_tool = TavilySearchResults(
-    max_results=3,
-    tavily_api_key=tavily_key
-)
+# Initialize TinyFish Search Client
+tf_client = TinyFish(api_key=tinyfish_key)
 
-# Set up Groq LLM
+# Initialize Groq LLM
 llm = ChatGroq(
     model="llama-3.1-8b-instant",
     temperature=0.2,
@@ -47,25 +43,26 @@ async def chat_endpoint(request: MessageRequest):
         current_year = datetime.now().year
         today_date = datetime.now().strftime("%B %d, %Y")
         
-        # Execute Tavily search
+        # 1. Fetch live search context via TinyFish Search API
         try:
-            raw_results = search_tool.invoke({"query": request.message})
-            search_context = "\n".join([r.get("content", "") for r in raw_results])
+            search_resp = tf_client.search.query(query=request.message)
+            results = search_resp.results if hasattr(search_resp, "results") else []
+            search_context = "\n".join([f"- {r.title}: {r.snippet}" for r in results[:3]])
         except Exception as search_err:
-            search_context = f"Search failed: {str(search_err)}"
+            search_context = f"Search error: {str(search_err)}"
 
         if not search_context.strip():
-            search_context = "No specific live web data retrieved."
+            search_context = "No search results retrieved."
 
-        # Prompt instruction preventing cutoff responses
+        # 2. Construct system prompt
         prompt = (
             f"SYSTEM: You are PRIME AI operating on {today_date}.\n"
             f"USER QUERY: {request.message}\n\n"
-            f"LIVE SEARCH DATA:\n{search_context}\n\n"
+            f"LIVE SEARCH RESULTS:\n{search_context}\n\n"
             "RULES:\n"
-            "1. Base your response on the live search data.\n"
-            "2. NEVER mention a 2023 knowledge cutoff date.\n"
-            "3. Provide a clear, real-time answer."
+            "1. Base your response strictly on the live search data.\n"
+            "2. Do NOT mention knowledge cutoff dates (e.g., 2023).\n"
+            "3. Answer directly, clearly, and concisely."
         )
 
         response = llm.invoke(prompt)
