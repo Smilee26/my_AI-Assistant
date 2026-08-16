@@ -3,7 +3,7 @@ from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from dotenv import load_dotenv 
+from dotenv import load_dotenv
 
 from langchain_groq import ChatGroq
 from langchain_core.tools import tool
@@ -21,7 +21,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Define custom Google search tool using googlesearch-python
 @tool
 def google_search(query: str) -> str:
     """Searches Google for real-time information and returns top results."""
@@ -39,10 +38,9 @@ def google_search(query: str) -> str:
 
 groq_key = os.getenv("GROQ_API_KEY")
 
-# Active Groq model string
 llm = ChatGroq(
     model="llama-3.1-8b-instant",
-    temperature=0.2,
+    temperature=0.1,
     api_key=groq_key
 )
 
@@ -56,23 +54,27 @@ class MessageRequest(BaseModel):
 @app.post("/api/chat")
 async def chat_endpoint(request: MessageRequest):
     try:
-        today_str = datetime.now().strftime("%B %d, %Y")
+        today_date = datetime.now()
+        today_str = today_date.strftime("%B %d, %Y")
+        current_year = today_date.year
 
         messages = [
             SystemMessage(
                 content=(
-                    f"You are PRIME, an intelligent AI assistant. Today's date is {today_str}.\n"
-                    "RULES:\n"
-                    "1. You have access to real-time live Google web search.\n"
-                    "2. If the user asks about recent events, current date, news, or knowledge cutoff, "
-                    "you MUST use the google_search tool before answering."
+                    f"You are PRIME AI, an assistant operating in {current_year}. Today is {today_str}.\n"
+                    f"CRITICAL DIRECTIVE:\n"
+                    f"- If the user asks about knowledge cutoffs, dates, current news, sports, or real-time info, "
+                    f"you MUST call the google_search tool FIRST.\n"
+                    f"- Do NOT state your static knowledge cutoff is 2023. Answer based on live search results for {current_year}."
                 )
             ),
             HumanMessage(content=request.message)
         ]
 
+        # First LLM Call
         ai_msg = llm_with_tools.invoke(messages)
 
+        # Handle tool calling loop
         if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
             messages.append(ai_msg)
             
@@ -82,18 +84,18 @@ async def chat_endpoint(request: MessageRequest):
                 
                 if tool_name in tools_by_name:
                     selected_tool = tools_by_name[tool_name]
-                    
                     query = tool_args.get("query", request.message) if isinstance(tool_args, dict) else str(tool_args)
                     
                     try:
                         tool_output = selected_tool.invoke({"query": query})
                     except Exception as err:
-                        tool_output = f"Search currently unavailable: {str(err)}"
+                        tool_output = f"Search fallback: {str(err)}"
                     
                     messages.append(
                         ToolMessage(content=str(tool_output), tool_call_id=tool_call["id"])
                     )
             
+            # Synthesize live 2026 data into final answer
             final_res = llm_with_tools.invoke(messages)
             return {"reply": final_res.content}
 
