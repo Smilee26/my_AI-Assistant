@@ -40,27 +40,28 @@ class MessageRequest(BaseModel):
 @app.post("/api/chat")
 async def chat_endpoint(request: MessageRequest):
     try:
-        current_year = datetime.now().year
         today_date = datetime.now().strftime("%B %d, %Y")
         
+        # Fetch up to 5 web results for higher detail
         try:
             search_resp = tf_client.search.query(query=request.message)
             results = search_resp.results if hasattr(search_resp, "results") else []
-            search_context = "\n".join([f"- {r.title}: {r.snippet}" for r in results[:3]])
+            search_context = "\n".join([f"- {r.title}: {r.snippet}" for r in results[:5]])
         except Exception as search_err:
             search_context = f"Search error: {str(search_err)}"
 
         if not search_context.strip():
             search_context = "No search results retrieved."
 
+        # Expanded system prompt for synthesized, complete answers
         prompt = (
             f"SYSTEM: You are PRIME AI operating on {today_date}.\n"
             f"USER QUERY: {request.message}\n\n"
             f"LIVE SEARCH RESULTS:\n{search_context}\n\n"
             "RULES:\n"
-            "1. Base your response strictly on the live search data.\n"
-            "2. Do NOT mention knowledge cutoff dates (e.g., 2023).\n"
-            "3. Answer directly, clearly, and concisely."
+            "1. Use live search data as your primary source for up-to-date real-time context.\n"
+            "2. Synthesize all retrieved findings into a comprehensive, direct, and detailed answer.\n"
+            "3. Do NOT mention knowledge cutoffs."
         )
 
         response = llm.invoke(prompt)
