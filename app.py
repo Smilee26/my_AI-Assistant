@@ -5,8 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-# LangChain Imports for IBM watsonx & Tools
-from langchain_ibm import ChatWatsonx
+# LangChain Imports for Groq & Tools
+from langchain_groq import ChatGroq
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
@@ -14,7 +14,7 @@ load_dotenv()
 
 app = FastAPI()
 
-# 1. Enable CORS for GitHub Pages frontend
+# 1. CORS Configuration for GitHub Pages Frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,26 +22,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. Fetch IBM Watsonx API Keys & Configuration
-api_key = os.getenv("IBM_CLOUD_API_KEY", "YOUR_IBM_API_KEY")
-project_id = os.getenv("IBM_PROJECT_ID", "YOUR_WATSONX_PROJECT_ID")
-url = os.getenv("IBM_WATSONX_URL", "https://us-south.ml.cloud.ibm.com")
+# 2. Fetch Groq API Key
+groq_key = os.getenv("GROQ_API_KEY")
 
-watsonx_params = {
-    "max_new_tokens": 800,
-    "temperature": 0.3
-}
-
-# 3. Initialize IBM Granite 3.0 Model via LangChain
-llm = ChatWatsonx(
-    model_id="ibm/granite-3-8b-instruct",
-    url=url,
-    apikey=api_key,
-    project_id=project_id,
-    params=watsonx_params
+# 3. Initialize Groq Chat Model (Using active replacement model)
+llm = ChatGroq(
+    model="qwen3.6-27b",  # Or "gpt-oss-120b"
+    temperature=0.2,
+    api_key=groq_key
 )
 
-# 4. Bind Search Tool to IBM Granite
+# 4. Bind DuckDuckGo Web Search Tool
 search_tool = DuckDuckGoSearchRun()
 tools = [search_tool]
 tools_by_name = {tool.name: tool for tool in tools}
@@ -53,22 +44,29 @@ class MessageRequest(BaseModel):
 @app.post("/api/chat")
 async def chat_endpoint(request: MessageRequest):
     try:
-        # Dynamically inject today's exact date to solve the knowledge cutoff issue
-        today_str = datetime.now().strftime("%B %d, %Y")
-        
+        # Dynamically fetch current date (e.g., August 16, 2026)
+        today_date = datetime.now()
+        today_str = today_date.strftime("%B %d, %Y")
+        current_year = today_date.year
+
+        # System message forcing 2026 temporal awareness and search execution
         messages = [
             SystemMessage(
-                content=f"You are PRIME, a helpful AI assistant. Today's date is {today_str}. "
-                        "Always use the web search tool to retrieve real-time data, current events, dates, "
-                        "or information beyond your training cutoff."
+                content=(
+                    f"You are PRIME, an intelligent AI assistant. Today's date is {today_str} (Year {current_year}). "
+                    f"Your static training data ends in the past. Whenever a user asks about current events, "
+                    f"dates, live information, or anything taking place in {current_year}, you MUST invoke "
+                    f"the web search tool to retrieve accurate, up-to-date data before responding. "
+                    f"Never say your knowledge ends in past years without searching first."
+                )
             ),
             HumanMessage(content=request.message)
         ]
 
-        # First LLM invocation
+        # First LLM execution
         ai_msg = llm_with_tools.invoke(messages)
 
-        # Handle tool calling loop for live DuckDuckGo Search
+        # Handle tool calling loop for DuckDuckGo
         if ai_msg.tool_calls:
             messages.append(ai_msg)
             for tool_call in ai_msg.tool_calls:
@@ -86,14 +84,14 @@ async def chat_endpoint(request: MessageRequest):
                         ToolMessage(content=str(tool_output), tool_call_id=tool_call["id"])
                     )
             
-            # Feed search results back to IBM Granite for the final answer
+            # Send search results back to Groq model for final 2026 answer
             final_res = llm_with_tools.invoke(messages)
             return {"reply": final_res.content}
 
         return {"reply": ai_msg.content}
 
     except Exception as e:
-        # Graceful fallback to raw Granite invocation if tool-calling fails
+        # Graceful fallback to direct LLM execution if tool calling fails
         try:
             fallback_res = llm.invoke(request.message)
             return {"reply": fallback_res.content}
