@@ -23,18 +23,18 @@ app.add_middleware(
 
 @tool
 def google_search(query: str) -> str:
-    """Searches Google for real-time information, news, current events, and up-to-date data."""
+    """Searches Google for current news, real-time data, and up-to-date information."""
     try:
-        results = list(search(query, num_results=4, advanced=True))
+        results = list(search(query, num_results=3, advanced=True))
         if not results:
-            return "No search results found."
+            return "No Google search results found."
         
         output = []
         for r in results:
             output.append(f"Title: {r.title}\nSnippet: {r.description}")
         return "\n\n".join(output)
     except Exception as e:
-        return f"Search execution failed: {str(e)}"
+        return f"Search error: {str(e)}"
 
 groq_key = os.getenv("GROQ_API_KEY")
 
@@ -47,8 +47,8 @@ llm = ChatGroq(
 tools = [google_search]
 tools_by_name = {tool.name: tool for tool in tools}
 
-# Bind tools to the model
-llm_with_tools = llm.bind_tools(tools)
+# FIX: Pass the explicit tool name "google_search" or "any" instead of "required"
+llm_forced_tool = llm.bind_tools(tools, tool_choice="google_search")
 
 class MessageRequest(BaseModel):
     message: str
@@ -59,26 +59,19 @@ async def chat_endpoint(request: MessageRequest):
         current_year = datetime.now().year
         today_str = datetime.now().strftime("%B %d, %Y")
 
-        # System prompt overriding default internal cutoff assumptions
         messages = [
             SystemMessage(
                 content=(
-                    f"You are PRIME AI, an up-to-date AI assistant operating in the year {current_year}. Today is {today_str}.\n\n"
-                    "RULES FOR UPDATED INFORMATION:\n"
-                    "1. Never mention a static '2023 knowledge cutoff'. You have live access to current information.\n"
-                    "2. ALWAYS call the `google_search` tool if the user asks about:\n"
-                    "   - Current dates, knowledge cutoffs, or operational capabilities.\n"
-                    "   - Recent news, sports, tech releases, or events beyond 2023.\n"
-                    "3. Once you receive search results, synthesize them into a clear, direct, and complete textual answer."
+                    f"You are PRIME AI, operating in {current_year}. Today is {today_str}.\n"
+                    "Use the search results to answer the query accurately with current information."
                 )
             ),
             HumanMessage(content=request.message)
         ]
 
-        # 1. First execution: Let LLM select/trigger tools
-        ai_msg = llm_with_tools.invoke(messages)
+        # 1. Mandatory Tool Call Step
+        ai_msg = llm_forced_tool.invoke(messages)
 
-        # 2. If the LLM generated tool calls
         if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
             messages.append(ai_msg)
             
@@ -96,15 +89,16 @@ async def chat_endpoint(request: MessageRequest):
                         ToolMessage(content=str(search_results), tool_call_id=tool_call["id"])
                     )
             
-            # 3. Second execution: Run standard LLM to synthesize final response
+            # 2. Final Synthesis Step (Standard LLM without forced tool choice)
             final_res = llm.invoke(messages)
-            reply_text = final_res.content if final_res.content else "I have retrieved the latest updates for 2026."
+            
+            reply_text = final_res.content if final_res.content else "I have retrieved the latest results."
             return {"reply": reply_text}
 
-        # Handle direct output when no tools are invoked
-        reply_text = ai_msg.content if ai_msg.content else "How can I assist you with current information today?"
-        return {"reply": reply_text}
+        return {"reply": "Unable to execute search."}
 
     except Exception as e:
         print(f"Error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal processing error")
+        # Fallback to standard generation if search execution fails
+        fallback = llm.invoke(request.message)
+        return {"reply": fallback.content}
