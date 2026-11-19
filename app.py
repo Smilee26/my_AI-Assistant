@@ -1,15 +1,14 @@
 import os
-import re
-from pathlib import Path
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from langchain_groq import ChatGroq
-from tinyfish import TinyFish
+from langchain_community.tools import DuckDuckGoSearchRun
 
 load_dotenv()
 
@@ -22,74 +21,101 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BASE_DIR = Path(__file__).resolve().parent
+os.makedirs("static", exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
+
+@app.get("/")
+async def serve_frontend():
+    index_path = "static/index.html"
+    if os.path.exists(index_path):
+        return FileResponse(index_path, media_type="text/html")
+    raise HTTPException(status_code=404, detail="static/index.html not found")
+
+
+@app.get("/manifest.json")
+async def serve_manifest():
+    manifest_path = "static/manifest.json"
+    if os.path.exists(manifest_path):
+        return FileResponse(manifest_path, media_type="application/manifest+json")
+    raise HTTPException(status_code=404, detail="static/manifest.json not found")
+
+
+@app.get("/sw.js")
+async def serve_sw():
+    sw_path = "static/sw.js"
+    if os.path.exists(sw_path):
+        return FileResponse(sw_path, media_type="application/javascript")
+    raise HTTPException(status_code=404, detail="static/sw.js not found")
+
+
+search_tool = DuckDuckGoSearchRun()
 groq_key = os.getenv("GROQ_API_KEY")
-tinyfish_key = os.getenv("TINYFISH_API_KEY")
 
-tf_client = TinyFish(api_key=tinyfish_key)
+if not groq_key:
+    raise RuntimeError("GROQ_API_KEY environment variable is missing.")
 
+# Replace with an active chat model ID from your Groq Console if needed
 llm = ChatGroq(
-    model="llama-3.1-8b-instant",
+    model="openai/gpt-oss-20b",
     temperature=0.2,
-    api_key=groq_key
+    api_key=groq_key,
 )
+
 
 class MessageRequest(BaseModel):
     message: str
 
-def clean_markdown_formatting(text: str) -> str:
-    """Removes unwanted markdown formatting symbols for plain text rendering."""
-    # Remove asterisks used for bold/italic (* or **)
-    text = re.sub(r'\*+', '', text)
-    # Remove header hashtags (# or ##)
-    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
-    return text.strip()
+
+GREETINGS = {
+    "hi", "hii", "hiii", "hello", "hey", "yo", "sup",
+    "good morning", "good evening", "good night"
+}
+
 
 @app.post("/api/chat")
 async def chat_endpoint(request: MessageRequest):
     try:
-        today_date = datetime.now().strftime("%B %d, %Y")
-        
-        # Retrieve live web search context
+        msg = request.message.strip()
+        if not msg:
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+        current_year = datetime.now().year
+        is_greeting = msg.lower().rstrip("!.?") in GREETINGS
+
+        if is_greeting:
+            prompt = (
+                f"Current Year: {current_year}\n"
+                f"User says: {msg}\n"
+                "Reply warmly and briefly as PRIME AI."
+            )
+            response = llm.invoke(prompt)
+            return {"reply": response.content}
+
+        search_query = f"{msg} {current_year}"
         try:
-            search_resp = tf_client.search.query(query=request.message)
-            results = search_resp.results if hasattr(search_resp, "results") else []
-            search_context = "\n".join([f"- {r.title}: {r.snippet}" for r in results[:5]])
+            search_results = search_tool.run(search_query)
         except Exception as search_err:
-            search_context = f"Search error: {str(search_err)}"
+            search_results = f"Search unavailable ({str(search_err)})."
 
-        if not search_context.strip():
-            search_context = "No live search results available."
+        if not search_results or not str(search_results).strip():
+            search_results = "No web snippets returned."
 
-        # System prompt instructions for natural, plain text output
         prompt = (
-            f"SYSTEM: You are PRIME AI, a direct assistant operating on {today_date}.\n"
-            f"USER QUERY: {request.message}\n\n"
-            f"LIVE SEARCH CONTEXT:\n{search_context}\n\n"
-            "FORMATTING & ACCURACY RULES:\n"
-            "1. Answer strictly using verified facts supported by the live search context.\n"
-            "2. Write in clean, natural conversational text without markdown symbols.\n"
-            "3. Do NOT use asterisks (*), hashtags (#), or bullet points with symbols.\n"
-            "4. Organize ideas using clear spacing and natural sentences.\n"
-            "5. Never mention knowledge cutoffs or context window limitations."
+            f"Current Year: {current_year}\n"
+            f"User Query: {msg}\n\n"
+            f"Web Context:\n{search_results}\n\n"
+            "INSTRUCTIONS:\n"
+            "- Use the web context when relevant for current/recent facts.\n"
+            "- Never mention a 2023 knowledge cutoff.\n"
+            "- Be clear and helpful."
         )
 
         response = llm.invoke(prompt)
-        raw_text = response.content
-        
-        # Remove leftover markdown characters before returning payload
-        cleaned_reply = clean_markdown_formatting(raw_text)
+        return {"reply": response.content}
 
-        return {"reply": cleaned_reply}
-
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Server Error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal processing error")
-
-@app.get("/")
-async def read_index():
-    index_path = BASE_DIR / "index.html"
-    if index_path.exists():
-        return FileResponse(str(index_path))
-    return {"status": "PRIME AI API active."}
+        raise HTTPException(status_code=500, detail=f"Backend error: {str(e)}")
